@@ -19,6 +19,7 @@ The Trainer class, to easily train a 🤗 Transformers from scratch or finetune 
 import collections
 import inspect
 import math
+import datetime
 import os
 import re
 import shutil
@@ -844,6 +845,8 @@ class Trainer:
 
         self.control = self.callback_handler.on_train_begin(self.args, self.state, self.control)
 
+        training_start_time = time.time()
+        rank = os.environ['RANK']
         # Skip the first epochs_trained epochs to get the random state of the dataloader at the right point.
         if not self.args.ignore_data_skip:
             for epoch in range(epochs_trained):
@@ -870,6 +873,8 @@ class Trainer:
             steps_in_epoch = len(epoch_iterator) if train_dataset_is_sized else self.args.max_steps
             self.control = self.callback_handler.on_epoch_begin(self.args, self.state, self.control)
 
+            start_time = time.time()
+
             for step, inputs in enumerate(epoch_iterator):
 
                 # Skip past any already trained steps if resuming training
@@ -886,6 +891,12 @@ class Trainer:
                         tr_loss += self.training_step(model, inputs)
                 else:
                     tr_loss += self.training_step(model, inputs)
+                
+                if step % 1 == 0:
+                    print('Rank: {} | Batch: [{}/{}] | Loss: {:.16f} | Accuracy: - | Batch time: {:.3f} s'.format(
+                        rank, step, len(epoch_iterator), tr_loss/(step+1), time.time() - start_time), flush=True)
+                start_time = time.time()
+
                 self._total_flos += self.floating_point_ops(inputs)
 
                 if (step + 1) % self.args.gradient_accumulation_steps == 0 or (
@@ -950,6 +961,10 @@ class Trainer:
             # Clean the state at the end of training
             delattr(self, "_past")
 
+        time_elapsed = time.time() - training_start_time
+        time_elapsed = datetime.timedelta(seconds=time_elapsed)
+        print("Rank: {} | Training time {} {} s".format(rank, time_elapsed, time_elapsed.total_seconds()), flush=True)
+
         logger.info("\n\nTraining completed. Do not forget to share your model on huggingface.co/models =)\n\n")
         if self.args.load_best_model_at_end and self.state.best_model_checkpoint is not None:
             logger.info(
@@ -970,7 +985,7 @@ class Trainer:
 
         metrics = speed_metrics("train", start_time, self.state.max_steps)
         if self._total_flos is not None:
-            self.store_flos()
+            # self.store_flos()
             metrics["total_flos"] = self.state.total_flos
         self.log(metrics)
 
@@ -1028,7 +1043,9 @@ class Trainer:
         else:
             output_dir = os.path.join(self.args.output_dir, checkpoint_folder)
 
-            self.store_flos()
+            # Introducing a spurious timeslice for added coverage while using elasticity
+            # print('About to call self.store_flos()', flush=True)
+            # self.store_flos()
 
         self.save_model(output_dir)
         if self.deepspeed:

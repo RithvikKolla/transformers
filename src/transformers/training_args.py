@@ -336,7 +336,14 @@ class TrainingArguments:
         default="auto",
         metadata={"help": "The backend to be used for mixed precision.", "choices": ["auto", "amp", "apex"]},
     )
+
+    world_size: int = field(default=int(os.getenv('WORLD_SIZE', 1)), metadata={"help": "For distributed training: world_size"})
+
     local_rank: int = field(default=-1, metadata={"help": "For distributed training: local_rank"})
+
+    dist_url: Optional[str] = field(
+        default=None, metadata={"help": "Used to initialize communication using filestore"}
+    )
 
     tpu_num_cores: Optional[int] = field(
         default=None, metadata={"help": "TPU: Number of TPU cores (automatically passed by launcher script)"}
@@ -502,7 +509,7 @@ class TrainingArguments:
 
                 deepspeed.init_distributed()
             else:
-                torch.distributed.init_process_group(backend="nccl")
+                torch.distributed.init_process_group(backend="nccl", init_method=self.dist_url, rank=int(os.getenv('RANK',0)), world_size=self.world_size)
             device = torch.device("cuda", self.local_rank)
             self._n_gpu = 1
 
